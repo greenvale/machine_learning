@@ -5,6 +5,10 @@
 #include <tuple>
 #include <assert.h>
 
+#include "../../mathlib/linear_algebra.hpp"
+
+// Operation
+
 template <class T, class U>
 class Operation
 {
@@ -84,6 +88,7 @@ void Operation<T, U>::compute()
 
 
 /**********************************************************************************************************************************************************************************/
+// Differentiable operation
 
 template <class T>
 class Differentiable_Operation : public Operation<T, T>
@@ -116,7 +121,6 @@ Differentiable_Operation<T>::Differentiable_Operation(std::vector<T*> inputs, st
 	{
 		assert(grads[i] != nullptr);
 		this->m_grads[i] = grads[i];
-		*(this->m_grads[i]) = 0.0; // set gradients to zero
 	}
 }
 
@@ -267,3 +271,73 @@ void Double_Square::compute_grad()
 {
 	*(this->m_grads[0]) = *(this->m_inputs[0]) * 2.0;
 }
+
+/**********************************************************************************************************************************************************************************/
+
+class Double_Sigmoid : public Differentiable_Operation<double>
+{
+public:
+	Double_Sigmoid();
+	Double_Sigmoid(std::vector<double*> inputs, std::vector<double*> outputs, std::vector<double*> grads);
+
+	void compute();
+	void compute_grad();
+
+};
+
+Double_Sigmoid::Double_Sigmoid() : Differentiable_Operation<double>()
+{
+}
+
+Double_Sigmoid::Double_Sigmoid(std::vector<double*> inputs, std::vector<double*> outputs, std::vector<double*> grads) : Differentiable_Operation<double>(inputs, outputs, grads)
+{
+	assert(inputs.size() == 1); // sigmoid function only takes one input
+}
+
+void Double_Sigmoid::compute()
+{
+	double result = *(this->m_inputs[0]);
+	result *= result;
+	for (int i = 0; i < this->m_num_outputs; ++i)
+	{
+		*(this->m_outputs[i]) = result; 
+	}
+}
+
+void Double_Sigmoid::compute_grad()
+{
+	*(this->m_grads[0]) = *(this->m_inputs[0]) * 2.0;
+}
+
+/**********************************************************************************************************************************************************************************/
+
+/*
+class Matrix_Summation : public Differentiable_Operation<mathlib::Matrix>
+{
+public:
+	Matrix_Summation();
+	Matrix_Summation(std::vector<mathlib::Matrix*> inputs, std::vector<mathlib::Matrix*> outputs, std::vector<mathlib::Matrix*> grads);
+
+	void compute();
+	void compute_grad();
+};
+
+Matrix_Summation::Matrix_Summation() : Differentiable_Operation<mathlib::Matrix>()
+{
+}
+
+Matrix_Summation::Matrix_Summation(std::vector<mathlib::Matrix*> inputs, std::vector<mathlib::Matrix*> outputs, std::vector<mathlib::Matrix*> grads) : Differentiable_Operation<mathlib::Matrix>(inputs, outputs, grads)
+{
+
+}
+
+void Matrix_Summation::compute()
+{
+
+}
+
+void Matrix_Summation::compute_grad()
+{
+
+}
+*/
