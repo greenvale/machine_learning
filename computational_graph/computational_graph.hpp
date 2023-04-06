@@ -334,6 +334,7 @@ void MatVecMul::grad()
 
 // Loss functions
 
+// Root mean-squared error
 class RMSE : public Operation
 {
 private:
@@ -377,6 +378,51 @@ void RMSE::grad()
 
     // dJ/dx1
     std::transform(m_grad[0].cbegin(), m_grad[0].cend(), m_grad[1].begin(), [](double x) { return -x; });
+}
+
+/* Crossentropy
+* Input  : h (predicted probabilities), y (actual probabilities)
+* Output : J (loss)
+* Gradient only calculated for input 0 (h)
+*/
+class Crossentropy : public Operation
+{
+private:
+    int m_size;
+public:
+    Crossentropy() = delete;
+    Crossentropy(const int& size);
+
+    void comp() override;
+    void grad() override;
+};
+
+Crossentropy::Crossentropy(const int& size) : Operation(2, 0), m_size(size)
+{
+    assert(size > 0);
+
+    // initialise out 
+    m_out = std::vector<double>(1);
+
+    // initialise grad (only for first input)
+    m_grad[0] = std::vector<double>(m_size);
+}
+
+void Crossentropy::comp()
+{
+    assert(m_pIn[0] != nullptr && m_pIn[0]->size() == m_size);
+    assert(m_pIn[1] != nullptr && m_pIn[1]->size() == m_size);
+
+    m_out[0] = 0;
+
+    for (int i = 0; i < m_size; ++i)
+        m_out[0] -= m_pIn[1]->at(i) * log(m_pIn[0]->at(i)) + (1.0 - m_pIn[1]->at(i)) * log(1.0 - m_pIn[0]->at(i));
+}
+
+void Crossentropy::grad()
+{
+    for (int i = 0; i < m_size; ++i)
+        m_grad[0][i] = m_pIn[0]->at(i) - m_pIn[1]->at(i) / (m_pIn[0]->at(i) * (1.0 - m_pIn[0]->at(i)));
 }
 
 //**************************************************************************************************************************
@@ -450,12 +496,16 @@ void Softmax::grad()
     // get total derivative DJ/Dy
     std::vector<double> Dy = totalGradIn();
 
-    // get dy/dx
-    std::transform(m_out.cbegin(), m_out.cend(), m_grad[0].begin(), [](double x) {return x * (1.0 - x); });
-    
-    // multiply dy/dx by DJ/Dy to get dJ/dx
-    std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(),
-        [](double dx_i, double Dy_i) {return Dy_i * dx_i; });
+    // set gradient to zero
+    std::fill(m_grad[0].begin(), m_grad[0].end(), 0);
+
+    // (dJ/dx)_j = (DJ/Dy)_i * (dy/dx)_ij
+    for (int i = 0; i < m_size; ++i)
+        for (int j = 0; j < m_size; ++j)
+            if (i == j)
+                m_grad[0][i] += Dy[j] * m_out[i] * (1.0 - m_out[j]);
+            else
+                m_grad[0][i] += -1.0 * Dy[j] * m_out[j] * m_out[i];
 }
 
 } // namespace cg
