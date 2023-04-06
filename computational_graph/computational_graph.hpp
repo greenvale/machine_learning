@@ -20,6 +20,11 @@ namespace cg
 {
 
 /* Operation node base class
+* Takes arbitrary number (numIn) of inputs as ptrs to vectors (pIn)
+* Computes one output vector (out)
+* Arbitrary number (numChild) of child operation nodes are bound to this node
+* Takes child gradient (dJ/dy) inputs as ptrs to vectors (pGradIn)
+* Computes gradient vectors (grad) for each input vector
 */
 class Operation
 {
@@ -53,7 +58,10 @@ Operation::Operation(const int& numIn, const int& numChild) : m_numIn(numIn), m_
 {
     assert(numIn > 0 && numChild >= 0);
 
+    // initialise grad container
     m_grad = std::vector<std::vector<double>>(m_numIn);
+
+    // initialise input ptr container, grad input ptr container
     m_pIn = std::vector<const std::vector<double>*>(m_numIn);
     m_pGradIn = std::vector<const std::vector<double>*>(m_numChild);
 }
@@ -118,15 +126,15 @@ void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int
 * (dJ/dx)_i = lambda'(x_i, y_i)
 * Lambda function is unary so node has 1 input. Lambda derivative is binary taking input vector and output vector.
 */
-class unary : public Operation
+class Unary : public Operation
 {
 public:
     int m_size;
     std::function<double(double)> m_fcn;
     std::function<double(double, double)> m_gradFcn;
 
-    unary() = delete;
-    unary(const int& numChild, const int& size, std::function<double(double)> fcn,
+    Unary() = delete;
+    Unary(const int& numChild, const int& size, std::function<double(double)> fcn,
         std::function<double(double, double)> gradFcn);
 
     void comp() override;
@@ -134,18 +142,21 @@ public:
 };
 
 // parameter ctor
-unary::unary(const int& numChild, const int& size, std::function<double(double)> fcn,
+Unary::Unary(const int& numChild, const int& size, std::function<double(double)> fcn,
     std::function<double(double, double)> gradFcn) : 
     Operation(1, numChild), m_size(size), m_fcn(fcn), m_gradFcn(gradFcn)
 {
     assert(size > 0);
 
+    // initialise out
     m_out = std::vector<double>(m_size);
+
+    // initialise grad
     m_grad[0] = std::vector<double>(m_size);
 }
 
 // node computation
-void unary::comp()
+void Unary::comp()
 {
     assert(m_pIn[0] != nullptr);
 
@@ -153,12 +164,14 @@ void unary::comp()
 }
 
 // node gradient
-void unary::grad()
+void Unary::grad()
 {
     for (auto p : m_pGradIn)
         assert(p != nullptr && p->size() == m_size);
 
+    // get total derivative for DJ/Dy
     std::vector<double> Dy = totalGradIn();
+
     std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(),
         [](double dx_i, double Dy_i) {return Dy_i * dx_i; });
 }
@@ -171,30 +184,33 @@ void unary::grad()
 * y = x_1 + ... + x_n
 * dJ/d(x_i) = sum_j{ dJ/d(y_j) } * dy/dx = DJ/Dy * dy/dx = DJ/Dy
 */
-class NVecSum: public Operation
+class VecSum: public Operation
 {
 public:
     int m_size;
 
-    NVecSum() = delete;
-    NVecSum(const int& numIn, const int& numChild, const int& size);
+    VecSum() = delete;
+    VecSum(const int& numIn, const int& numChild, const int& size);
 
     void comp() override;
     void grad() override;
 };
 
 // parameter ctor
-NVecSum::NVecSum(const int& numIn, const int& numChild, const int& size) : 
+VecSum::VecSum(const int& numIn, const int& numChild, const int& size) : 
     Operation(numIn, numChild), m_size(size)
 {
     assert(size > 0);
 
+    // initialise out
     m_out = std::vector<double>(m_size);
+
+    // initialise grad
     std::fill(m_grad.begin(), m_grad.end(), std::vector<double>(m_size));
 }
 
 // node computation
-void NVecSum::comp()
+void VecSum::comp()
 {
     for (auto p : m_pIn)
         assert(p != nullptr && p->size() == m_size);
@@ -208,7 +224,7 @@ void NVecSum::comp()
 }
 
 // node gradients
-void NVecSum::grad()
+void VecSum::grad()
 {
     for (auto p : m_pGradIn)
         assert(p != nullptr && p->size() == m_size);
@@ -239,20 +255,111 @@ class MatVecMul : public Operation
 public:
     int m_inSize, m_outSize;
 
-    MatVecMul(const int& nchild, const int& xsize, const int& ysize);
+    MatVecMul() = delete;
+    MatVecMul(const int& numChild, const int& inSize, const int& outSize);
 
-    void comp() override = 0;
-    void grad() override = 0;
+    void comp() override;
+    void grad() override;
 };
 
-MatVecMul::MatVecMul(const int& nchild, const int& inSize, const int& outSize) : 
-    Operation(2, nchild), m_inSize(inSize), m_outSize(outSize)
+MatVecMul::MatVecMul(const int& numChild, const int& inSize, const int& outSize) : 
+    Operation(2, numChild), m_inSize(inSize), m_outSize(outSize)
 {
     assert(inSize > 0 && outSize > 0);
 
+    // initialise out
     m_out = std::vector<double>(m_outSize);
+
+    // initialise grad
     m_grad[0] = std::vector<double>(m_inSize * m_outSize);
     m_grad[1] = std::vector<double>(m_inSize);
+}
+
+// compute node
+void MatVecMul::comp()
+{
+    assert(m_pIn[0] != nullptr && m_pIn[1] != nullptr);
+    assert(m_pIn[0]->size() == m_inSize * m_outSize && m_pIn[1]->size() == m_inSize);
+
+    // set y to zero vector
+    std::fill(m_out.begin(), m_out.end(), 0);
+
+    for (int i = 0; i < m_outSize; ++i)
+        for (int j = 0; j < m_inSize; ++j)
+            m_out[i] += m_pIn[0]->at(m_inSize * i + j) * m_pIn[1]->at(j);
+}
+
+// compute node gradients
+void MatVecMul::grad()
+{
+    for (auto p : m_pGradIn)
+        assert(p != nullptr && p->size() == m_outSize);
+
+    // get total derivative for DJ/Dy
+    std::vector<double> Dy = totalGradIn();
+
+    // initialise vector for dJ/dW
+    std::fill(m_grad[0].begin(), m_grad[0].end(), 0);
+
+    // initialise vector for dJ/dx
+    std::fill(m_grad[1].begin(), m_grad[1].end(), 0);
+
+    // calculate dJ/dW
+    for (int i = 0; i < m_outSize; ++i)        // iterate rows of y
+        for (int j = 0; j < m_inSize; ++j)    // iterate rows of x
+            m_grad[0][m_inSize * i + j] = Dy[i] * m_pIn[1]->at(j);
+
+    // calculate dJ/dx
+    for (int i = 0; i < m_inSize; ++i)        // iterate rows of x
+        for (int j = 0; j < m_outSize; ++j)    // iterate rows of y
+            m_grad[1][i] += Dy[j] * m_grad[0][m_inSize * j + i];
+}
+
+//**************************************************************************************************************************
+
+class RMSE : public Operation
+{
+public:
+    int m_size;
+
+    RMSE() = delete;
+    RMSE(const int& size);
+
+    void comp() override;
+    void grad() override;
+};
+
+RMSE::RMSE(const int& size) : Operation(2, 0), m_size(size)
+{
+    assert(size > 0);
+
+    // initialise out 
+    m_out = std::vector<double>(1);
+
+    // initialise grad
+    m_grad[0] = std::vector<double>(m_size);
+    m_grad[1] = std::vector<double>(m_size);
+}
+
+void RMSE::comp()
+{
+    assert(m_pIn[0] != nullptr && m_pIn[0]->size() == m_size);
+    assert(m_pIn[1] != nullptr && m_pIn[1]->size() == m_size);
+
+    m_out[0] = 0;
+
+    for (int i = 0; i < m_size; ++i)
+        m_out[0] += (m_pIn[0]->at(i) - m_pIn[1]->at(i)) * (m_pIn[0]->at(i) - m_pIn[1]->at(i));
+}
+
+void RMSE::grad()
+{
+    // dJ/dx0
+    for (int i = 0; i < m_size; ++i)
+        m_grad[0][i] = m_pIn[0]->at(i) - m_pIn[1]->at(i);
+
+    // dJ/dx1
+    std::transform(m_grad[0].cbegin(), m_grad[0].cend(), m_grad[1].begin(), [](double x) { return -x; });
 }
 
 } // namespace cg
