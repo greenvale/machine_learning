@@ -21,223 +21,239 @@ namespace cg
 
 /* Operation node base class
 */
-class operation
+class Operation
 {
-public:
-    std::vector<const std::vector<double>*> vp_x;
-    std::vector<std::vector<double>> m_dx;
-    std::vector<double> m_y;
-    std::vector<const std::vector<double>*> vp_dy;
+protected:
+    int m_numIn, m_numChild;
+    std::vector<const std::vector<double>*> m_pIn;
+    std::vector<std::vector<double>> m_grad;
+    std::vector<double> m_out;
+    std::vector<const std::vector<double>*> m_pGradIn;
 
-    operation();
-    operation(const int& npar, const int& nchild);
+protected:
+    std::vector<double> totalGradIn();
+
+public:
+    Operation() = delete;
+    Operation(const int& numIn, const int& numChild);
 
     virtual void comp() = 0;
     virtual void grad() = 0;
-    std::vector<double> get_Dy();
-    void input_vec(const std::vector<double>* pvec, const int& ind);
+
+    void inputVec(const std::vector<double>* pVec, const int& ind);
+    std::vector<double> output();
+
+    friend void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int>& child);
 };
 
-// default ctor
-operation::operation()
+// parameter ctor taking number of inputs & number of child operations
+// initialises containers for inputs, gradient inputs and operation gradients 
+// output doesn't need initialisation
+Operation::Operation(const int& numIn, const int& numChild) : m_numIn(numIn), m_numChild(numChild)
 {
-}
+    assert(numIn > 0 && numChild >= 0);
 
-// parameter ctor taking number of parent nodes & number of child nodes
-// initialises containers for inputs, outputs, gradients
-operation::operation(const int& npar, const int& nchild)
-{
-    assert(npar > 0 && nchild >= 0);
-
-    m_dx = std::vector<std::vector<double>>(npar);
-    vp_x = std::vector<const std::vector<double>*>(npar);
-    vp_dy = std::vector<const std::vector<double>*>(nchild);
+    m_grad = std::vector<std::vector<double>>(m_numIn);
+    m_pIn = std::vector<const std::vector<double>*>(m_numIn);
+    m_pGradIn = std::vector<const std::vector<double>*>(m_numChild);
 }
 
 // calculates total derivative for DJ/Dy 
 // DJ/Dy = sum_i{ dJ/d(y_i) }
-std::vector<double> operation::get_Dy()
+std::vector<double> Operation::totalGradIn()
 {
-    // assert that dy container not empty and each element has an equal size > 0
-    assert(vp_dy.size() > 0 && vp_dy[0]->size() > 0);
-    for (auto p : vp_dy)
-        assert(p != nullptr && p->size() == vp_dy[0]->size());
+    for (auto p : m_pGradIn)
+        assert(p != nullptr && p->size() == m_pGradIn[0]->size());
 
     // initialise Dy vector as zero vector
-    std::vector<double> Dy(vp_dy[0]->size(), 0);
+    std::vector<double> Dy(m_pGradIn[0]->size(), 0);
 
     // accumulate each d(y_i) into Dy vector
-    for (auto p : vp_dy)
+    for (auto p : m_pGradIn)
         std::transform(Dy.cbegin(), Dy.cend(), p->cbegin(), Dy.begin(), std::plus<>());
 
     return Dy;
 }
 
 // bind input vector by ptr to operation node given input index
-void operation::input_vec(const std::vector<double>* pvec, const int& ind)
+void Operation::inputVec(const std::vector<double>* pVec, const int& ind)
 {
     // assert input index is valid
-    assert(ind >= 0 && ind < vp_x.size());
+    assert(ind >= 0 && ind < m_numIn);
 
-    vp_x[ind] = pvec;
+    m_pIn[ind] = pVec;
+}
+
+// returns output
+std::vector<double> Operation::output()
+{
+    return m_out;
 }
 
 // binds 2 operations together in series in parent-child relationship
-// parent output (y) -> child input (x)
+// parent output -> child input
 // takes output index for parent and input index for child
-void bind(const std::pair<operation*, int>& par_y, const std::pair<operation*, int>& child_x)
+void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int>& child)
 {
-    // assert that parent and child ptrs point to valid operation with > 0 inputs/outputs and valid indexes
-    assert(par_y.first != nullptr && child_x.first != nullptr);
-    assert(par_y.first->vp_dy.size() > 0 && child_x.first->vp_x.size() > 0);
-    assert(par_y.second >= 0 && par_y.second < par_y.first->vp_dy.size());
-    assert(child_x.second >= 0 && child_x.second < child_x.first->vp_x.size());
+    // parent and child operation pointers are not nullptrs
+    assert(par.first != nullptr && child.first != nullptr);
+
+    // parent y index in range of nchild and child x index in range of npar
+    assert(par.second >= 0 && par.second < par.first->m_numChild);
+    assert(child.second >= 0 && child.second < child.first->m_numIn);
 
     // parent dy ptr = child dx ptr
-    par_y.first->vp_dy[par_y.second] = &(child_x.first->m_dx[child_x.second]);
+    par.first->m_pGradIn[par.second] = &(child.first->m_grad[child.second]);
 
     // child x ptr = parent y ptr
-    child_x.first->vp_x[child_x.second] = &(par_y.first->m_y);
+    child.first->m_pIn[child.second] = &(par.first->m_out);
 }
 
 //**************************************************************************************************************************
 
 /* Unary operation given by lambda function
-* Input : x (vector)
+* Input  : x (1 vector)
 * Output : y (vector)
 * y_i = lambda(x_i)
 * (dJ/dx)_i = lambda'(x_i, y_i)
-* Lambda function is unary so node has 1 input parent. Lambda derivative is binary taking input vector and output vector.
+* Lambda function is unary so node has 1 input. Lambda derivative is binary taking input vector and output vector.
 */
-class unary : public operation
+class unary : public Operation
 {
 public:
     int m_size;
     std::function<double(double)> m_fcn;
-    std::function<double(double, double)> m_fcn_grad;
+    std::function<double(double, double)> m_gradFcn;
 
-    unary(const int& nchild, const int& size, std::function<double(double)> fcn,
-        std::function<double(double, double)> fcn_grad);
+    unary() = delete;
+    unary(const int& numChild, const int& size, std::function<double(double)> fcn,
+        std::function<double(double, double)> gradFcn);
 
     void comp() override;
     void grad() override;
 };
 
 // parameter ctor
-unary::unary(const int& nchild, const int& size, std::function<double(double)> fcn,
-    std::function<double(double, double)> fcn_grad) : operation(1, nchild)
+unary::unary(const int& numChild, const int& size, std::function<double(double)> fcn,
+    std::function<double(double, double)> gradFcn) : 
+    Operation(1, numChild), m_size(size), m_fcn(fcn), m_gradFcn(gradFcn)
 {
     assert(size > 0);
 
-    m_size = size;
-    m_fcn = fcn;
-    m_fcn_grad = fcn_grad;
-
-    m_y = std::vector<double>(m_size);
-    m_dx[0] = std::vector<double>(m_size);
+    m_out = std::vector<double>(m_size);
+    m_grad[0] = std::vector<double>(m_size);
 }
 
 // node computation
 void unary::comp()
 {
-    assert(vp_x[0] != nullptr);
+    assert(m_pIn[0] != nullptr);
 
-    std::transform(vp_x[0]->cbegin(), vp_x[0]->cend(), m_y.begin(), m_fcn);
+    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.begin(), m_fcn);
 }
 
 // node gradient
 void unary::grad()
 {
-    assert(vp_dy.size() > 0);
-    for (auto p : vp_dy)
+    for (auto p : m_pGradIn)
         assert(p != nullptr && p->size() == m_size);
 
-    std::vector<double> Dy = get_Dy();
-    std::transform(m_dx[0].cbegin(), m_dx[0].cend(), Dy.cbegin(), m_dx[0].begin(),
+    std::vector<double> Dy = totalGradIn();
+    std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(),
         [](double dx_i, double Dy_i) {return Dy_i * dx_i; });
 }
 
 //**************************************************************************************************************************
 
 /* Summation of n vectors (n >= 2)
-* Input : { x_1, ... , x_n } (vectors)
+* Input : { x_1, ... , x_n } (>= 2 vectors)
 * Output : y (vector)
 * y = x_1 + ... + x_n
 * dJ/d(x_i) = sum_j{ dJ/d(y_j) } * dy/dx = DJ/Dy * dy/dx = DJ/Dy
 */
-class nvec_sum : public operation
+class NVecSum: public Operation
 {
 public:
     int m_size;
 
-    nvec_sum(const int& npar, const int& nchild, const int& size);
+    NVecSum() = delete;
+    NVecSum(const int& numIn, const int& numChild, const int& size);
 
     void comp() override;
     void grad() override;
 };
 
 // parameter ctor
-nvec_sum::nvec_sum(const int& npar, const int& nchild, const int& size)
+NVecSum::NVecSum(const int& numIn, const int& numChild, const int& size) : 
+    Operation(numIn, numChild), m_size(size)
 {
     assert(size > 0);
 
-    m_size = size;
-    m_y = std::vector<double>(m_size);
-    std::fill(m_dx.begin(), m_dx.end(), std::vector<double>(m_size));
+    m_out = std::vector<double>(m_size);
+    std::fill(m_grad.begin(), m_grad.end(), std::vector<double>(m_size));
 }
 
 // node computation
-void nvec_sum::comp()
+void NVecSum::comp()
 {
-    assert(vp_x.size() > 0);
-    for (auto p : vp_x)
+    for (auto p : m_pIn)
         assert(p != nullptr && p->size() == m_size);
 
     // set y to zero vector
-    std::fill(m_y.begin(), m_y.end(), 0);
+    std::fill(m_out.begin(), m_out.end(), 0);
 
-    // accumulate sums in vector
-    for (auto p : vp_x)
-        std::transform(m_y.cbegin(), m_y.cend(), p->cbegin(), m_y.begin(), std::plus<>());
+    // accumulate x_i in vector y for all i
+    for (auto p : m_pIn)
+        std::transform(m_out.cbegin(), m_out.cend(), p->cbegin(), m_out.begin(), std::plus<>());
 }
 
 // node gradients
-void nvec_sum::grad()
+void NVecSum::grad()
 {
-    for (auto p : vp_dy)
+    for (auto p : m_pGradIn)
         assert(p != nullptr && p->size() == m_size);
     
     // get total derivative DJ/Dy
-    std::vector<double> Dy = get_Dy();
+    std::vector<double> Dy = totalGradIn();
 
-    for (int i = 0; i < m_dx.size(); ++i)
-        std::copy(Dy.cbegin(), Dy.cend(), m_dx[i].begin());
+    // set d(x_i) to Dy for all i
+    for (int i = 0; i < m_grad.size(); ++i)
+        std::copy(Dy.cbegin(), Dy.cend(), m_grad[i].begin());
 }
 
 //**************************************************************************************************************************
 
 /*  Matrix-vector multiplication
-* Input : W (matrix) , x (vector)
+* Input  : W (matrix) , x (vector)
 * Output : y (vector)
 * y = W * x
 * dJ/dW = sum_j{ dJ/d(y_j) } * dy/dW
-* = sum_j{ dJ/d(y_j) } * 3d_array( dy_<ROW> / dW_<LANE><COL> )
+*       = sum_j{ dJ/d(y_j) } * 3d_array( dy_<ROW> / dW_<LANE><COL> )
 * (dJ/dW)_ij = (DJ/Dy)_i * x_j
 * dJ/dx = sum_j{ dJ/d(y_j) } * dy/dx
-* = sum_j{ dJ/d(y_j) } * W
+*       = sum_j{ dJ/d(y_j) } * W
 * (dJ/dx)_i = sum_j{ (DJ/Dy)_j * W_ji }
 */
-class matvec_mul : public operation
+class MatVecMul : public Operation
 {
 public:
-    int m_xsize, m_ysize;
+    int m_inSize, m_outSize;
 
-    matvec_mul();
-    matvec_mul(const int& nchild, const int& xsize, const int& ysize);
+    MatVecMul(const int& nchild, const int& xsize, const int& ysize);
 
-    void comp() override;
-    void grad() override;
+    void comp() override = 0;
+    void grad() override = 0;
 };
+
+MatVecMul::MatVecMul(const int& nchild, const int& inSize, const int& outSize) : 
+    Operation(2, nchild), m_inSize(inSize), m_outSize(outSize)
+{
+    assert(inSize > 0 && outSize > 0);
+
+    m_out = std::vector<double>(m_outSize);
+    m_grad[0] = std::vector<double>(m_inSize * m_outSize);
+    m_grad[1] = std::vector<double>(m_inSize);
+}
 
 } // namespace cg
 
