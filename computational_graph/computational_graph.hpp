@@ -12,6 +12,8 @@
 #include <iostream>
 #include <algorithm>
 #include <functional>
+#include <numeric>
+#include <math.h>
 
 namespace gv
 {
@@ -30,7 +32,7 @@ class Operation
 {
 protected:
     int m_numIn, m_numChild;
-    std::vector<const std::vector<double>*> m_pIn;
+    std::vector<std::vector<double>*> m_pIn;
     std::vector<std::vector<double>> m_grad;
     std::vector<double> m_out;
     std::vector<const std::vector<double>*> m_pGradIn;
@@ -45,8 +47,9 @@ public:
     virtual void comp() = 0;
     virtual void grad() = 0;
 
-    void inputVec(const std::vector<double>* pVec, const int& ind);
+    void inputVec(std::vector<double>* pVec, const int& ind);
     std::vector<double> output();
+    void gradDescent(const int& ind, const double& alpha);
 
     friend void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int>& child);
 };
@@ -62,7 +65,7 @@ Operation::Operation(const int& numIn, const int& numChild) : m_numIn(numIn), m_
     m_grad = std::vector<std::vector<double>>(m_numIn);
 
     // initialise input ptr container, grad input ptr container
-    m_pIn = std::vector<const std::vector<double>*>(m_numIn);
+    m_pIn = std::vector<std::vector<double>*>(m_numIn);
     m_pGradIn = std::vector<const std::vector<double>*>(m_numChild);
 }
 
@@ -84,7 +87,7 @@ std::vector<double> Operation::totalGradIn()
 }
 
 // bind input vector by ptr to operation node given input index
-void Operation::inputVec(const std::vector<double>* pVec, const int& ind)
+void Operation::inputVec(std::vector<double>* pVec, const int& ind)
 {
     // assert input index is valid
     assert(ind >= 0 && ind < m_numIn);
@@ -96,6 +99,13 @@ void Operation::inputVec(const std::vector<double>* pVec, const int& ind)
 std::vector<double> Operation::output()
 {
     return m_out;
+}
+
+// iteration of gradient descent on input element given input gradient and alpha
+void Operation::gradDescent(const int& ind, const double& alpha)
+{
+    std::transform(m_pIn[ind]->cbegin(), m_pIn[ind]->cend(), m_grad[ind].cbegin(), m_pIn[ind]->begin(),
+        [&](double xi, double dxi) {return xi - alpha * dxi; });
 }
 
 // binds 2 operations together in series in parent-child relationship
@@ -128,8 +138,9 @@ void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int
 */
 class Unary : public Operation
 {
-public:
+private:
     int m_size;
+public:
     std::function<double(double)> m_fcn;
     std::function<double(double, double)> m_gradFcn;
 
@@ -172,6 +183,10 @@ void Unary::grad()
     // get total derivative for DJ/Dy
     std::vector<double> Dy = totalGradIn();
 
+    // get dy/dx for unary operation using gradient function taking both inputs and outputs
+    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.cbegin(), m_grad[0].begin(), m_gradFcn);
+
+    // multiply dy/dx with DJ/Dy to get dJ/dx
     std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(),
         [](double dx_i, double Dy_i) {return Dy_i * dx_i; });
 }
@@ -186,9 +201,9 @@ void Unary::grad()
 */
 class VecSum: public Operation
 {
-public:
+private:
     int m_size;
-
+public:
     VecSum() = delete;
     VecSum(const int& numIn, const int& numChild, const int& size);
 
@@ -252,9 +267,9 @@ void VecSum::grad()
 */
 class MatVecMul : public Operation
 {
-public:
+private:
     int m_inSize, m_outSize;
-
+public:
     MatVecMul() = delete;
     MatVecMul(const int& numChild, const int& inSize, const int& outSize);
 
@@ -317,11 +332,13 @@ void MatVecMul::grad()
 
 //**************************************************************************************************************************
 
+// Loss functions
+
 class RMSE : public Operation
 {
-public:
+private:
     int m_size;
-
+public:
     RMSE() = delete;
     RMSE(const int& size);
 
@@ -360,6 +377,85 @@ void RMSE::grad()
 
     // dJ/dx1
     std::transform(m_grad[0].cbegin(), m_grad[0].cend(), m_grad[1].begin(), [](double x) { return -x; });
+}
+
+//**************************************************************************************************************************
+
+// Activation functions
+
+// ReLU
+class ReLU : public Unary
+{
+public:
+    ReLU(const int& numChild, const int& size);
+};
+
+ReLU::ReLU(const int& numChild, const int& size) : Unary(numChild, size,
+    [](double x) { return x > 0 ? x : 0; },
+    [](double x, double y) { return x > 0 ? 1 : 0; })
+{
+}
+
+// Sigmoid function
+class Sigmoid : public Unary
+{
+public:
+    Sigmoid(const int& numChild, const int& size);
+};
+
+Sigmoid::Sigmoid(const int& numChild, const int& size) : Unary(numChild, size,
+    [](double x) {return 1.0 / (1.0 + exp(-1.0 * x)); },
+    [](double x, double y) {return y * (1.0 - y); })
+{
+}
+
+// Softmax layer (not unary operation)
+class Softmax : public Operation
+{
+private:
+    int m_size;
+public:
+    Softmax(const int& numChild, const int& size);
+
+    void comp() override;
+    void grad() override;
+};
+
+Softmax::Softmax(const int& numChild, const int& size) : Operation(1, numChild), m_size(size)
+{
+    assert(size > 0);
+
+    // initialise out
+    m_out = std::vector<double>(m_size);
+
+    // initialise grad
+    m_grad[0] = std::vector<double>(m_size);
+}
+
+void Softmax::comp()
+{
+    assert(m_pIn[0] != nullptr && m_pIn[0]->size() == m_size);
+
+    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.begin(), [](double x) {return exp(x); });
+    double tmp = std::accumulate(m_out.cbegin(), m_out.cend(), 0);
+    tmp = 1.0 / tmp;
+    std::transform(m_out.cbegin(), m_out.cend(), m_out.begin(), [&](double x) {return x * tmp; });
+}
+
+void Softmax::grad()
+{
+    for (auto p : m_pGradIn)
+        assert(p != nullptr && p->size() == m_size);
+
+    // get total derivative DJ/Dy
+    std::vector<double> Dy = totalGradIn();
+
+    // get dy/dx
+    std::transform(m_out.cbegin(), m_out.cend(), m_grad[0].begin(), [](double x) {return x * (1.0 - x); });
+    
+    // multiply dy/dx by DJ/Dy to get dJ/dx
+    std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(),
+        [](double dx_i, double Dy_i) {return Dy_i * dx_i; });
 }
 
 } // namespace cg
