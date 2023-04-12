@@ -132,7 +132,7 @@ void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int
 * Input  : x (1 vector)
 * Output : y (vector)
 * y_i = lambda(x_i)
-* (dJ/dx)_i = lambda'(x_i, y_i)
+* (dJ/dx)_i = (DJ/Dy)_i * lambda'(x_i, y_i)
 * Lambda function is unary so node has 1 input. Lambda derivative is binary taking input vector and output vector.
 */
 class Unary : public Operation
@@ -305,11 +305,7 @@ void MatVecMul::grad()
         assert(p != nullptr && p->size() == m_outSize);
 
     // get total derivative for DJ/Dy
-    std::vector<double> Dy;
-    if (m_numChild > 0) 
-        Dy = totalGradIn();
-    else
-        Dy = std::vector<double>(m_outSize, 1);
+    std::vector<double> Dy = totalGradIn();
 
     // initialise vector for dJ/dx
     std::fill(m_grad[1].begin(), m_grad[1].end(), 0);
@@ -372,8 +368,9 @@ void Classifier::comp()
 
 void Classifier::grad()
 {
-    for (int i = 0; i < m_size; ++i)
-        m_grad[0][i] = m_out[i] - m_pIn[1]->at(i);
+    //for (int i = 0; i < m_size; ++i)
+    //    m_grad[0][i] = m_out[i] - m_pIn[1]->at(i);
+    std::transform(m_out.cbegin(), m_out.cend(), m_pIn[1]->cbegin(), m_grad[0].begin(), [](double a, double b){return a - b;});
 }
 
 //**************************************************************************************************************************
