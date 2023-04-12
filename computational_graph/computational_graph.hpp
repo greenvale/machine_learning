@@ -30,12 +30,13 @@ namespace cg
 */
 class Operation
 {
-public:
+protected:
     int m_numIn, m_numChild;
-    std::vector<std::vector<double>*> m_pIn;
-    std::vector<std::vector<double>> m_grad;
-    std::vector<double> m_out;
+    std::vector<std::vector<double>*>       m_pIn;
     std::vector<const std::vector<double>*> m_pGradIn;
+
+    std::vector<std::vector<double>>    m_grad;
+    std::vector<double>                 m_out;
 
 protected:
     std::vector<double> totalGradIn();
@@ -69,7 +70,7 @@ Operation::Operation(const int& numIn, const int& numChild) : m_numIn(numIn), m_
     m_pGradIn = std::vector<const std::vector<double>*>(m_numChild);
 }
 
-// calculates total derivative for DJ/Dy 
+// calculates total derivative for DJ/Dy by summing all gradients coming into operation from child operations 
 // DJ/Dy = sum_i{ dJ/d(y_i) }
 std::vector<double> Operation::totalGradIn()
 {
@@ -79,8 +80,7 @@ std::vector<double> Operation::totalGradIn()
     std::vector<double> Dy(m_pGradIn[0]->size(), 0);
 
     for (int i = 0; i < m_pGradIn.size(); ++i)
-        for (int j = 0; j < m_pGradIn[i]->size(); ++j)
-            Dy[j] += m_pGradIn[i]->at(j);
+        std::transform(Dy.cbegin(), Dy.cend(), m_pGradIn[i]->cbegin(), Dy.begin(), std::plus<>());
     
     return Dy;
 }
@@ -103,8 +103,8 @@ std::vector<double> Operation::output()
 // iteration of gradient descent on input element given input gradient and alpha
 void Operation::gradDescent(const int& ind, const double& alpha)
 {
-    for (int i = 0; i < m_pIn[ind]->size(); ++i)
-        (*m_pIn[ind])[i] += -1.0 * alpha * (m_grad[ind][i]);
+    std::transform(m_pIn[ind]->cbegin(), m_pIn[ind]->cend(), m_grad[ind].cbegin(), m_pIn[ind]->begin(), 
+        [alpha](double x, double d){return x-d*alpha;});
 }
 
 // binds 2 operations together in series in parent-child relationship
@@ -144,16 +144,16 @@ public:
     std::function<double(double, double)> m_gradFcn;
 
     Unary() = delete;
-    Unary(const int& numChild, const int& size, std::function<double(double)> fcn,
-        std::function<double(double, double)> gradFcn);
+    Unary(const int& numChild, const int& size, const std::function<double(double)>& fcn,
+        const std::function<double(double, double)>& gradFcn);
 
     void comp() override;
     void grad() override;
 };
 
 // parameter ctor
-Unary::Unary(const int& numChild, const int& size, std::function<double(double)> fcn,
-    std::function<double(double, double)> gradFcn) : 
+Unary::Unary(const int& numChild, const int& size, const std::function<double(double)>& fcn,
+    const std::function<double(double, double)>& gradFcn) : 
     Operation(1, numChild), m_size(size), m_fcn(fcn), m_gradFcn(gradFcn)
 {
     assert(size > 0);
@@ -170,8 +170,7 @@ void Unary::comp()
 {
     assert(m_pIn[0] != nullptr);
 
-    for (int i = 0; i < m_size; ++i)
-        m_out[i] = m_fcn(m_pIn[0]->at(i));
+    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.begin(), m_fcn);
 }
 
 // node gradient
@@ -183,8 +182,8 @@ void Unary::grad()
     // get total derivative for DJ/Dy
     std::vector<double> Dy = totalGradIn();
 
-    for (int i = 0; i < m_size; ++i)
-        m_grad[0][i] = Dy[i] * m_gradFcn(m_pIn[0]->at(i), m_out[i]);
+    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.cbegin(), m_grad[0].begin(), m_gradFcn);
+    std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(), std::multiplies<>());
 }
 
 //**************************************************************************************************************************
@@ -229,9 +228,8 @@ void VecSum::comp()
     // set y to zero vector
     std::fill(m_out.begin(), m_out.end(), 0);
 
-    for (int i = 0; i < m_size; ++i)
-        for (int j = 0; j < m_numIn; ++j)
-            m_out[i] += m_pIn[j]->at(i);
+    for (int i = 0; i < m_numIn; ++i)
+        std::transform(m_out.cbegin(), m_out.cend(), m_pIn[i]->cbegin(), m_out.begin(), std::plus<>());
 }
 
 // node gradients
@@ -241,16 +239,10 @@ void VecSum::grad()
         assert(p != nullptr && p->size() == m_size);
     
     // get total derivative DJ/Dy
-    std::vector<double> Dy;
-    if (m_numChild > 0) 
-        Dy = totalGradIn();
-    else
-        Dy = std::vector<double>(m_size, 1);
+    std::vector<double> Dy = totalGradIn();
 
-    // set d(x_i) to Dy for all i
     for (int i = 0; i < m_numIn; ++i)
-        for (int j = 0; j < m_size; ++j)
-            m_grad[i][j] = Dy[j];
+        std::copy(Dy.cbegin(), Dy.cend(), m_grad[i].begin());
 }
 
 //**************************************************************************************************************************
