@@ -1,114 +1,144 @@
 
-#include "mnist.hpp"
+#include "mnist_csv.hpp"
+#include <string>
+#include <fstream>
+#include "math.h"
 
-#include "../../neural_net.hpp"
-#include "../../../computational_graph/mlcg.hpp"
+#include "mnist_nn.hpp"
+#include "../../../computational_graph/computational_graph.hpp"
 
 /*
-
     MNIST Test for neural network implementations
-        - direction implementation using std::vector 
-        - implementation using computational graph modules in mlcg.hpp
-
-    Key result:
-        - Both modules produce the SAME results given the SAME random seed initialisation 
-        - This can be proven by switching the ordering of the testing to see that the same results are produced.
-
 */
 
-// test for first implementation of neural network in neural_network.hpp
-void NN_1_TEST(const MNIST& mnist)
+// Test with computational graph
+void TEST_1(const MNIST& mnist)
 {
-    std::cout << "DIRECT IMPLEMENTATION NN MODEL" << std::endl;
-    gv::neural_network nn({28*28, 30, 10}, {"relu", "softmax"}, "crossentropy");
+    double alpha = 0.01;
 
-    // train model
-    nn.train(mnist.m_train_x, mnist.m_train_y, 0.01, 1, 1);
+    gv::cg::MatVecMul   M1(1, 28*28, 30);
+    gv::cg::MatVecMul   M2(1, 30, 10);
+    gv::cg::VecSum      V1(2, 1, 30);
+    gv::cg::VecSum      V2(2, 1, 10);
+    gv::cg::ReLU        A1(1, 30);
+    gv::cg::Classifier  L (10);
 
-    // evaluate model for samples from each number 0,...,9
-    int ind = 0;
-    for (int i = 0; i < 10000; ++i)
+    std::vector<double> Xbuf(28*28);
+    std::vector<double> Ybuf(10);
+    std::vector<double> W1(28*28*30);
+    std::vector<double> W2(30*10);
+    std::vector<double> B1(30); 
+    std::vector<double> B2(10);
+
+    gv::cg::bind({&M1, 0}, {&V1, 0});
+    gv::cg::bind({&V1, 0}, {&A1, 0});
+    gv::cg::bind({&A1, 0}, {&M2, 1});
+    gv::cg::bind({&M2, 0}, {&V2, 0});
+    gv::cg::bind({&V2, 0}, {&L,  0});
+
+    M1.inputVec(&W1, 0);
+    M2.inputVec(&W2, 0);
+    V1.inputVec(&B1, 1);
+    V2.inputVec(&B2, 1);
+    M1.inputVec(&Xbuf, 1);
+    L.inputVec(&Ybuf, 1);
+
+    // initialise random vectors for weights and biases
+    std::transform(W1.cbegin(), W1.cend(), W1.begin(), [](double x){return 2*((double)rand()/(double)RAND_MAX) - 1;});
+    std::transform(B1.cbegin(), B1.cend(), B1.begin(), [](double x){return 2*((double)rand()/(double)RAND_MAX) - 1;});
+    std::transform(W2.cbegin(), W2.cend(), W2.begin(), [](double x){return 2*((double)rand()/(double)RAND_MAX) - 1;});
+    std::transform(B2.cbegin(), B2.cend(), B2.begin(), [](double x){return 2*((double)rand()/(double)RAND_MAX) - 1;});
+
+    for (int i = 0; i < mnist.trainX.size(); ++i)
     {
-        if (ind == 10)
-            break;
-        
-        if (mnist.m_test_y[i][ind] == 1)
+        std::copy(mnist.trainX[i].cbegin(), mnist.trainX[i].cend(), Xbuf.begin());
+        std::copy(mnist.trainY[i].cbegin(), mnist.trainY[i].cend(), Ybuf.begin());
+
+        M1.comp();
+        V1.comp();
+        A1.comp();
+        M2.comp();
+        V2.comp();
+        L.comp();
+
+        if (i % 1000 == 0)
         {
-            auto h = nn.eval(mnist.m_test_x[i]);
-            std::cout << "Probability of success in test for digit (" << ind << "): " << (h[ind])*100 << "%" << std::endl;
-            ++ind;
+            std::cout << i << " | Loss: " << L.output()[10] << std::endl; 
         }
+
+        L.grad();
+        V2.grad();
+        M2.grad();
+        A1.grad();
+        V1.grad();
+        M1.grad();
+
+        M1.gradDescent(0, alpha);
+        V1.gradDescent(1, alpha);
+        M2.gradDescent(0, alpha);
+        V2.gradDescent(1, alpha);
+    }
+
+    for (int i = 0; i < 20; ++i)
+    {
+        std::copy(mnist.trainX[i].cbegin(), mnist.trainX[i].cend(), Xbuf.begin());
+        std::copy(mnist.trainY[i].cbegin(), mnist.trainY[i].cend(), Ybuf.begin());
+
+        M1.comp();
+        V1.comp();
+        A1.comp();
+        M2.comp();
+        V2.comp();
+        L.comp();
+
+        std::cout << L.output() << std::endl;
+        std::cout << Ybuf << std::endl;
+        std::cout << "\n\n";
     }
 }
 
-// test for computational graph implementation of neural network using elements from mlcg.hpp
-void NN_COMP_GRAPH_TEST(const MNIST& mnist)
+// Test with std::array implementation
+void TEST_2(const MNIST& mnist)
 {
-    std::cout << "COMPUTATIONAL GRAPH NN MODEL" << std::endl;
-    gv::mlcg::dense_lyr     lyr1;
-    gv::mlcg::dense_lyr     lyr2;
-    gv::mlcg::crossentropy  loss;
+    double alpha = 0.01;
 
-    lyr1.init({28*28, 30}, "relu");
-    lyr2.init({30, 10}, "softmax");
-    loss.init(10);
+    gv::MNIST_NN nn;
 
-    // connect output to hidden1
-    gv::mlcg::dense_lyr::connect(&lyr1, &lyr2);
-
-    // connect loss to output
-    lyr2.add_loss(&loss);
-
-    for (int i = 0; i < 60000; ++i)
+    for (int i = 0; i < mnist.trainX.size(); ++i)
     {
-        lyr1.set_vec_input(&(mnist.m_train_x[i]));
-        loss.set_truth(&(mnist.m_train_y[i]));
+        nn.setX(mnist.trainX[i]);
+        nn.setY(mnist.trainY[i]);
+        nn.forwardPass();
+        nn.backprop();
+        nn.gradDescentInc(alpha);
 
-        // forward pass
-        lyr1.comp();
-        lyr2.comp();
-        loss.comp();
+        if (i % 1000 == 0)
+        {
+            std::cout << i << " | Loss: " << nn.getLoss() << std::endl; 
+        }
 
-        // backpropagation
-        loss.grad();
-        lyr2.grad();
-        lyr1.grad();
-        
-        lyr1.grad_descent(0.01);
-        lyr2.grad_descent(0.01);
     }
 
-    // evaluate model for samples from each number 0,...,9
-    int ind = 0;
-    for (int i = 0; i < 10000; ++i)
+    for (int i = 0; i < 20; ++i)
     {
-        if (ind == 10)
-            break;
-        
-        if (mnist.m_test_y[i][ind] == 1)
-        {
-            lyr1.set_vec_input(&(mnist.m_test_x[i]));
-            loss.set_truth(&(mnist.m_test_y[i]));
-            lyr1.comp();
-            lyr2.comp();
-            loss.comp();
-            std::cout << "Probability of success in test for digit (" << ind << "): " << (lyr2.p_act->m_y[ind])*100 << "%" << std::endl;
-            ++ind;
-        }
+        nn.setX(mnist.testX[i]);
+        nn.setY(mnist.testY[i]);
+        nn.forwardPass();
+        std::cout << nn.getOutput() << std::endl;
+        std::cout << mnist.testY[i] << std::endl;
+        std::cout << "Loss: " << nn.getLoss() << std::endl;
+        std::cout << "\n\n";
     }
 }
 
 int main()
 {
-    MNIST mnist("./data/train-images.idx3-ubyte", 
-        "./data/train-labels.idx1-ubyte",
-        "./data/t10k-images.idx3-ubyte",
-        "./data/t10k-labels.idx1-ubyte");
-
-    NN_1_TEST(mnist);
-
-    NN_COMP_GRAPH_TEST(mnist);
+    auto trainPair = MNIST_Load_CSV("./data/mnist_train.csv", 60000);
+    auto testPair =  MNIST_Load_CSV("./data/mnist_test.csv", 10000);
     
-    
+    MNIST mnist = MNIST_From_Int(trainPair.first, trainPair.second, testPair.first, testPair.second);
 
+    TEST_1(mnist);
+
+    TEST_2(mnist);
 }

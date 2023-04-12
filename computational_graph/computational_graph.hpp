@@ -30,7 +30,7 @@ namespace cg
 */
 class Operation
 {
-protected:
+public:
     int m_numIn, m_numChild;
     std::vector<std::vector<double>*> m_pIn;
     std::vector<std::vector<double>> m_grad;
@@ -56,7 +56,7 @@ public:
 
 // parameter ctor taking number of inputs & number of child operations
 // initialises containers for inputs, gradient inputs and operation gradients 
-// output doesn't need initialisation
+// output vector and grad vectors must be defined in derived class ctor
 Operation::Operation(const int& numIn, const int& numChild) : m_numIn(numIn), m_numChild(numChild)
 {
     assert(numIn > 0 && numChild >= 0);
@@ -76,13 +76,12 @@ std::vector<double> Operation::totalGradIn()
     for (auto p : m_pGradIn)
         assert(p != nullptr && p->size() == m_pGradIn[0]->size());
 
-    // initialise Dy vector as zero vector
     std::vector<double> Dy(m_pGradIn[0]->size(), 0);
 
-    // accumulate each d(y_i) into Dy vector
-    for (auto p : m_pGradIn)
-        std::transform(Dy.cbegin(), Dy.cend(), p->cbegin(), Dy.begin(), std::plus<>());
-
+    for (int i = 0; i < m_pGradIn.size(); ++i)
+        for (int j = 0; j < m_pGradIn[i]->size(); ++j)
+            Dy[j] += m_pGradIn[i]->at(j);
+    
     return Dy;
 }
 
@@ -104,8 +103,8 @@ std::vector<double> Operation::output()
 // iteration of gradient descent on input element given input gradient and alpha
 void Operation::gradDescent(const int& ind, const double& alpha)
 {
-    std::transform(m_pIn[ind]->cbegin(), m_pIn[ind]->cend(), m_grad[ind].cbegin(), m_pIn[ind]->begin(),
-        [&](double xi, double dxi) {return xi - alpha * dxi; });
+    for (int i = 0; i < m_pIn[ind]->size(); ++i)
+        (*m_pIn[ind])[i] += -1.0 * alpha * (m_grad[ind][i]);
 }
 
 // binds 2 operations together in series in parent-child relationship
@@ -118,7 +117,7 @@ void bind(const std::pair<Operation*, int>& par, const std::pair<Operation*, int
 
     // parent y index in range of nchild and child x index in range of npar
     assert(par.second >= 0 && par.second < par.first->m_numChild);
-    assert(child.second >= 0 && child.second < child.first->m_numIn);
+    assert(child.second >= 0 && child.second < child.first->m_grad.size()); // use grad size not numIn as not all inputs always have grad
 
     // parent dy ptr = child dx ptr
     par.first->m_pGradIn[par.second] = &(child.first->m_grad[child.second]);
@@ -171,7 +170,8 @@ void Unary::comp()
 {
     assert(m_pIn[0] != nullptr);
 
-    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.begin(), m_fcn);
+    for (int i = 0; i < m_size; ++i)
+        m_out[i] = m_fcn(m_pIn[0]->at(i));
 }
 
 // node gradient
@@ -183,12 +183,8 @@ void Unary::grad()
     // get total derivative for DJ/Dy
     std::vector<double> Dy = totalGradIn();
 
-    // get dy/dx for unary operation using gradient function taking both inputs and outputs
-    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.cbegin(), m_grad[0].begin(), m_gradFcn);
-
-    // multiply dy/dx with DJ/Dy to get dJ/dx
-    std::transform(m_grad[0].cbegin(), m_grad[0].cend(), Dy.cbegin(), m_grad[0].begin(),
-        [](double dx_i, double Dy_i) {return Dy_i * dx_i; });
+    for (int i = 0; i < m_size; ++i)
+        m_grad[0][i] = Dy[i] * m_gradFcn(m_pIn[0]->at(i), m_out[i]);
 }
 
 //**************************************************************************************************************************
@@ -233,9 +229,9 @@ void VecSum::comp()
     // set y to zero vector
     std::fill(m_out.begin(), m_out.end(), 0);
 
-    // accumulate x_i in vector y for all i
-    for (auto p : m_pIn)
-        std::transform(m_out.cbegin(), m_out.cend(), p->cbegin(), m_out.begin(), std::plus<>());
+    for (int i = 0; i < m_size; ++i)
+        for (int j = 0; j < m_numIn; ++j)
+            m_out[i] += m_pIn[j]->at(i);
 }
 
 // node gradients
@@ -245,11 +241,16 @@ void VecSum::grad()
         assert(p != nullptr && p->size() == m_size);
     
     // get total derivative DJ/Dy
-    std::vector<double> Dy = totalGradIn();
+    std::vector<double> Dy;
+    if (m_numChild > 0) 
+        Dy = totalGradIn();
+    else
+        Dy = std::vector<double>(m_size, 1);
 
     // set d(x_i) to Dy for all i
-    for (int i = 0; i < m_grad.size(); ++i)
-        std::copy(Dy.cbegin(), Dy.cend(), m_grad[i].begin());
+    for (int i = 0; i < m_numIn; ++i)
+        for (int j = 0; j < m_size; ++j)
+            m_grad[i][j] = Dy[j];
 }
 
 //**************************************************************************************************************************
@@ -268,7 +269,8 @@ void VecSum::grad()
 class MatVecMul : public Operation
 {
 private:
-    int m_inSize, m_outSize;
+    int m_inSize;
+    int m_outSize;
 public:
     MatVecMul() = delete;
     MatVecMul(const int& numChild, const int& inSize, const int& outSize);
@@ -311,10 +313,11 @@ void MatVecMul::grad()
         assert(p != nullptr && p->size() == m_outSize);
 
     // get total derivative for DJ/Dy
-    std::vector<double> Dy = totalGradIn();
-
-    // initialise vector for dJ/dW
-    std::fill(m_grad[0].begin(), m_grad[0].end(), 0);
+    std::vector<double> Dy;
+    if (m_numChild > 0) 
+        Dy = totalGradIn();
+    else
+        Dy = std::vector<double>(m_outSize, 1);
 
     // initialise vector for dJ/dx
     std::fill(m_grad[1].begin(), m_grad[1].end(), 0);
@@ -327,12 +330,76 @@ void MatVecMul::grad()
     // calculate dJ/dx
     for (int i = 0; i < m_inSize; ++i)        // iterate rows of x
         for (int j = 0; j < m_outSize; ++j)    // iterate rows of y
-            m_grad[1][i] += Dy[j] * m_grad[0][m_inSize * j + i];
+            m_grad[1][i] += Dy[j] * m_pIn[0]->at(m_inSize * j + i);
 }
 
 //**************************************************************************************************************************
 
-// Loss functions
+class Classifier : public Operation
+{
+private:
+    int m_size;
+public:
+    Classifier() = delete;
+    Classifier(const int& size);
+
+    void comp() override;
+    void grad() override;
+};
+
+Classifier::Classifier(const int& size) : Operation(2, 0), m_size(size)
+{
+    assert(size > 0);
+
+    // initialise out
+    m_out = std::vector<double>(m_size + 1);
+
+    // initialise grad
+    m_grad[0] = std::vector<double>(m_size);
+}
+
+void Classifier::comp()
+{
+    assert(m_pIn[0] != nullptr && m_pIn[1] != nullptr);
+    assert(m_pIn[0]->size() == m_size && m_pIn[1]->size() == m_size);
+
+    // activate
+    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.begin(), [](double x){return exp(x);});
+    double tmp = 0.0;
+    for (int i = 0; i < m_size; ++i)
+        tmp += m_out[i];
+    tmp = 1.0 / tmp;
+    for (int i = 0; i < m_size; ++i)
+        m_out[i] *= tmp;
+
+    // calculate loss
+    m_out[m_size] = 0.0;
+    for (int i = 0; i < m_size; ++i)
+        m_out[m_size] -= m_pIn[1]->at(i) * log(m_out[i]);
+}
+
+void Classifier::grad()
+{
+    for (int i = 0; i < m_size; ++i)
+        m_grad[0][i] = m_out[i] - m_pIn[1]->at(i);
+}
+
+//**************************************************************************************************************************
+
+// ReLU
+class ReLU : public Unary
+{
+public:
+    ReLU(const int& numChild, const int& size);
+};
+
+ReLU::ReLU(const int& numChild, const int& size) : Unary(numChild, size,
+    [](double x) { return x > 0 ? x : 0; },
+    [](double x, double y) { return x > 0 ? 1 : 0; })
+{
+}
+
+//**************************************************************************************************************************
 
 // Root mean-squared error
 class RMSE : public Operation
@@ -379,134 +446,8 @@ void RMSE::grad()
     // dJ/dx1
     std::transform(m_grad[0].cbegin(), m_grad[0].cend(), m_grad[1].begin(), [](double x) { return -x; });
 }
-
-/* Crossentropy
-* Input  : h (predicted probabilities), y (actual probabilities)
-* Output : J (loss)
-* Gradient only calculated for input 0 (h)
-*/
-class Crossentropy : public Operation
-{
-private:
-    int m_size;
-public:
-    Crossentropy() = delete;
-    Crossentropy(const int& size);
-
-    void comp() override;
-    void grad() override;
-};
-
-Crossentropy::Crossentropy(const int& size) : Operation(2, 0), m_size(size)
-{
-    assert(size > 0);
-
-    // initialise out 
-    m_out = std::vector<double>(1);
-
-    // initialise grad (only for first input)
-    m_grad[0] = std::vector<double>(m_size);
-}
-
-void Crossentropy::comp()
-{
-    assert(m_pIn[0] != nullptr && m_pIn[0]->size() == m_size);
-    assert(m_pIn[1] != nullptr && m_pIn[1]->size() == m_size);
-
-    m_out[0] = 0;
-
-    for (int i = 0; i < m_size; ++i)
-        m_out[0] -= m_pIn[1]->at(i) * log(m_pIn[0]->at(i)) + (1.0 - m_pIn[1]->at(i)) * log(1.0 - m_pIn[0]->at(i));
-}
-
-void Crossentropy::grad()
-{
-    for (int i = 0; i < m_size; ++i)
-        m_grad[0][i] = m_pIn[0]->at(i) - m_pIn[1]->at(i) / (m_pIn[0]->at(i) * (1.0 - m_pIn[0]->at(i)));
-}
-
 //**************************************************************************************************************************
 
-// Activation functions
-
-// ReLU
-class ReLU : public Unary
-{
-public:
-    ReLU(const int& numChild, const int& size);
-};
-
-ReLU::ReLU(const int& numChild, const int& size) : Unary(numChild, size,
-    [](double x) { return x > 0 ? x : 0; },
-    [](double x, double y) { return x > 0 ? 1 : 0; })
-{
-}
-
-// Sigmoid function
-class Sigmoid : public Unary
-{
-public:
-    Sigmoid(const int& numChild, const int& size);
-};
-
-Sigmoid::Sigmoid(const int& numChild, const int& size) : Unary(numChild, size,
-    [](double x) {return 1.0 / (1.0 + exp(-1.0 * x)); },
-    [](double x, double y) {return y * (1.0 - y); })
-{
-}
-
-// Softmax layer (not unary operation)
-class Softmax : public Operation
-{
-private:
-    int m_size;
-public:
-    Softmax(const int& numChild, const int& size);
-
-    void comp() override;
-    void grad() override;
-};
-
-Softmax::Softmax(const int& numChild, const int& size) : Operation(1, numChild), m_size(size)
-{
-    assert(size > 0);
-
-    // initialise out
-    m_out = std::vector<double>(m_size);
-
-    // initialise grad
-    m_grad[0] = std::vector<double>(m_size);
-}
-
-void Softmax::comp()
-{
-    assert(m_pIn[0] != nullptr && m_pIn[0]->size() == m_size);
-
-    std::transform(m_pIn[0]->cbegin(), m_pIn[0]->cend(), m_out.begin(), [](double x) {return exp(x); });
-    double tmp = std::accumulate(m_out.cbegin(), m_out.cend(), 0);
-    tmp = 1.0 / tmp;
-    std::transform(m_out.cbegin(), m_out.cend(), m_out.begin(), [&](double x) {return x * tmp; });
-}
-
-void Softmax::grad()
-{
-    for (auto p : m_pGradIn)
-        assert(p != nullptr && p->size() == m_size);
-
-    // get total derivative DJ/Dy
-    std::vector<double> Dy = totalGradIn();
-
-    // set gradient to zero
-    std::fill(m_grad[0].begin(), m_grad[0].end(), 0);
-
-    // (dJ/dx)_j = (DJ/Dy)_i * (dy/dx)_ij
-    for (int i = 0; i < m_size; ++i)
-        for (int j = 0; j < m_size; ++j)
-            if (i == j)
-                m_grad[0][i] += Dy[j] * m_out[i] * (1.0 - m_out[j]);
-            else
-                m_grad[0][i] += -1.0 * Dy[j] * m_out[j] * m_out[i];
-}
 
 } // namespace cg
 
