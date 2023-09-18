@@ -1,6 +1,11 @@
 import numpy as np
 import scipy
 
+# Q-learning agent
+# Uses look-up table for the Q function
+# As a consequence it is only suitable for FruitCatch with extra_prob=0, i.e. only one fruit at a time
+# Otherwise there is no compact way to represent the state
+
 def encode_state(glove_pos, fruit_pos_list) -> str:
     result = str(glove_pos)
     if fruit_pos_list:
@@ -15,8 +20,10 @@ class Q_Agent:
         self.num_actions = 3
         self.action_space = [-1, 0, 1]
         self.eps = 0.1
+        self.eps_decay = 0.5
         self.alpha = 0.1
         self.gamma = 0.8
+        self.training = True
 
         # initialise Q table with random weights
         all_fruit_pos_list = [ (r,c) for r in range(grid_size) for c in range(grid_size) ] + [None]
@@ -80,5 +87,5 @@ class Q_Agent:
         # get reward --> send to reward_(t) in cache
         self.cache['reward'] = reward
 
-    def set_epsilon(self, eps):
-        self.eps = eps
+    def drop_eps(self):
+        self.eps *= self.eps_decay
