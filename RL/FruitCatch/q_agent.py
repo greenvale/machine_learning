@@ -9,7 +9,7 @@ def encode_state(glove_pos, fruit_pos_list) -> str:
         result += '--None'
     return result
 
-class QRL_Agent:
+class Q_Agent:
     def __init__(self, grid_size, glove_width):
         # 3 available actions to agent for each state
         self.num_actions = 3

@@ -2,9 +2,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
 
-from catch import Catch
-from agent import QRL_Agent
-from agent import encode_state
+from fruit_catch import FruitCatch
+from q_agent import Q_Agent
+from q_agent import encode_state
 
 # game settings
 grid_size = 20
@@ -12,7 +12,7 @@ glove_width = 3
 prob_extra = 0.
 
 # create game instance
-game = Catch(grid_size, glove_width, prob_extra)
+game = FruitCatch(grid_size, glove_width, prob_extra)
 
 # configure some game settings
 game.fps = 60
@@ -23,7 +23,7 @@ game.fruit_reward = 10.
 game.move_reward = -0.01
 
 # create agent instance
-myAgent = QRL_Agent(grid_size, glove_width)
+myAgent = Q_Agent(grid_size, glove_width)
 
 # run training session
 game.run(myAgent.take_action, myAgent.receive_reward, False, False, 'Data')

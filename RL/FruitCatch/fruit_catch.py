@@ -3,9 +3,9 @@ import random
 import math
 import pygame
 from pygame.locals import *
-from cache import ScalarCache
+from scalar_cache import ScalarCache
 
-class Catch:
+class FruitCatch:
     def __init__(self, grid_size:int, glove_width:int, prob_extra:float):
         self.fps = 60                       # frame rate of simulation
         self.move_reward = -0.01              # reward for moving (action -1 or 1)
