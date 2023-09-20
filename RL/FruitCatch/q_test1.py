@@ -3,6 +3,7 @@ import matplotlib.cm as cm
 import numpy as np
 import math
 import pickle
+import os
 
 from fruit_catch import FruitCatch
 from q_agent import Q_Agent
@@ -18,28 +19,40 @@ game = FruitCatch(grid_size, glove_width, prob_extra)
 
 # configure some game settings
 game.fps = 50
-game.max_timestamp = None#5000000
+game.max_timestamp = 10000000
 #game.force_col = int(grid_size/2)
 game.fruit_miss = -10.
 game.fruit_reward = 10.
 game.move_reward = -0.1
 game.eps_drop_freq = 1500000
-game.peek_every = 200000
-game.peek_len = 1000
+game.peek_every = 10000000
+game.peek_len = 100
 game.final_peek = True
 
 # create agent instance with random Q table
-myAgent = Q_Agent(grid_size, glove_width)
-myAgent.eps_decay = 0.5
+agent_file = 'agent_q_test1.pkl'
+agent_dir = '.'
+load_saved = True
+save_after_train = False
 
-# load Q table data (if already trained)
-if True:
-    pass
+if load_saved and agent_file:
+    with open(os.path.join(agent_dir, agent_file),'rb') as file:
+        myAgent = pickle.load(file)
+        print(f"Loaded agent from {agent_file}")
+else:
+    myAgent = Q_Agent(grid_size, glove_width)
+    myAgent.eps_decay = 0.5
 
 # run training session
 myAgent.training = True
 game.display_override = True
 game.run(myAgent, 'Data')
+
+# Save agent after training
+if save_after_train:
+    with open(os.path.join(agent_dir, agent_file), 'wb') as file:
+        pickle.dump(myAgent, file)
+        print(f"Saved agent to {agent_file}")
 
 # Plot the success rate over timestamp
 if myAgent.training == True:
@@ -50,12 +63,8 @@ if myAgent.training == True:
     plt.plot(game.stat_timestamp, np.array(game.success_rate)*100.0)
     plt.show()
 
-# Save the Q table data
-if True and myAgent.training == True:
-    pass # ** IMPLEMENT **
-
 # Plot the Q table data
-if True:
+if False:
     plot_cols = []
     if game.force_col:
         plot_cols.append(game.force_col)
