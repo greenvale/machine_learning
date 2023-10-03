@@ -25,6 +25,7 @@ class FruitCatch:
         self.running = False
 
     # take action input and determine the new state and reward    
+    # expects actions in {-1, 0, 1}
     def update_state(self, action:int) -> (float, float):
         reward = 0.
         success = None
