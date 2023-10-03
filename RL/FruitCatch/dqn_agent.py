@@ -7,22 +7,26 @@ from collections import deque
 
 class Model(nn.Module):
     def __init__(self):
-        self.conv1 = nn.Conv2d(1, 4)
+        super().__init__()
+        self.conv1 = nn.Conv2d(2, 4, 2)
         self.pool1 = nn.MaxPool2d(2)
         self.flatten = nn.Flatten()
-        self.lin1 = nn.Linear(6, 3)
+        self.lin1 = nn.Linear(324, 3)
 
-    def forward(self, x, y):
+    def forward(self, x, y=None):
         x = self.conv1(x)
         x = self.pool1(x)
         x = self.flatten(x)
         x = self.lin1(x)
-        loss = F.mse_loss(x, y)
-        return x, loss
+        if y is not None:
+            loss = F.mse_loss(x, y)
+            return x[0], loss
+        else:
+            return x[0]
 
 # copy the parameter values from src model to dest model
 # so dest model has same parameter values as src model
-def copy_params(model_src:Model, model_dest:Model):
+def copy_params(model_src, model_dest):
     for ps,pd in zip(model_src.parameters(), model_dest.parameters()):
         pd.data = ps.data
 
@@ -60,6 +64,7 @@ class DQN_Agent:
         self.alpha = 0.1
         self.gamma = 0.8
         self.training = True
+        self.learning_rate = 0.01
 
         self.replay_buffer_size = 1000
         self.replay_buffer = deque([], maxlen=self.replay_buffer_size)
@@ -75,16 +80,16 @@ class DQN_Agent:
         # choose a random array of transitions from the replay buffer
         # construct the X inputs and y targets from these transitions to get a batch
         # Adjust the weights of the predictor model
-        batch_data = torch.zeros((self.batch_size, 1, self.grid_size, self.grid_size), dtype=torch.float)
+        batch_data = torch.zeros((self.batch_size, 2, self.grid_size, self.grid_size), dtype=torch.float)
         batch_targets = torch.zeros((self.batch_size, 3), dtype=torch.float)
-        idx = torch.randint(0, self.replay_buffer_size, (self.batch_size,))
+        idx = torch.randint(0, len(self.replay_buffer) - 1, (self.batch_size,))
         bi = 0
         for i in idx.tolist():
             trans = self.replay_buffer[i]
-            batch_data[bi, 0, :, :] = torch.tensor(trans.state.tolist())
+            batch_data[bi, :, :, :] = trans.state
 
             # get the TD target value of the Q(s, a) value (a'th element of output Q(s))
-            td_target = trans.reward + self.gamma*(self.target_model(trans.future_state)).max()
+            td_target = trans.reward + self.gamma*(self.target_model(trans.future_state.unsqueeze(0))).max()
             
             # target is then a zero vector except for the a'th value which is the TD target
             batch_targets[bi, trans.action_idx] = td_target
@@ -102,14 +107,14 @@ class DQN_Agent:
             p.data += -self.learning_rate * p.grad
 
     # transfer the predictor model weights to the target model
-    def iterate_parameters(self):
+    def iterate_model(self):
         copy_params(self.predictor_model, self.target_model)
 
     # decide action given state using the epsilon-greedy policy
     def eval_policy(self, state):
         policy_probs = np.ones((self.num_actions,)) * (self.eps/self.num_actions)
-        
-        policy_probs[ ( self.predictor_model(state)  ).argmax()] += 1.0 - self.eps
+
+        policy_probs[ self.predictor_model(state.unsqueeze(0)).argmax()] += 1.0 - self.eps
         
         rv = scipy.stats.multinomial(1, policy_probs)
         action_idx = rv.rvs(1).argmax()
@@ -120,8 +125,7 @@ class DQN_Agent:
     # if this is the first timestep then open a new transition
     # otherwise complete the existing transition by given future_state
     # then open a new transition for the state
-    def take_action(self, timestamp, state):
-
+    def take_action(self, state):
         if len(self.replay_buffer) == 0:
             self.replay_buffer.append(Transition())
             self.replay_buffer[-1].state = state

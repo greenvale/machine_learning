@@ -4,6 +4,7 @@ import math
 import pygame
 from pygame.locals import *
 from scalar_cache import ScalarCache
+import torch
 
 class FruitCatch:
     def __init__(self, grid_size:int, glove_width:int, prob_extra:float):
@@ -17,7 +18,7 @@ class FruitCatch:
         self.force_col = None               # forces fruit to fall from one col if not None
 
         # setup the game attributes
-        self.grid = np.zeros((grid_size, grid_size), dtype=np.uint8)
+        self.grid = torch.zeros((2, grid_size, grid_size), dtype=torch.float)
         self.glove_pos = 0
         self.glove_pos_range = (0, grid_size - glove_width)
         self.fruit = []
@@ -74,14 +75,14 @@ class FruitCatch:
     # updates the grid representation of environment
     def update_grid(self) -> None:
         # set grid to all zeros to refresh
-        self.grid[:,:] = 0
+        self.grid[:,:,:] = 0
 
         # draw glove
-        self.grid[-1,self.glove_pos:self.glove_pos+self.glove_width] = 1
+        self.grid[0, 0, self.glove_pos:self.glove_pos+self.glove_width] = 1.
 
         # draw fruit
         for f in self.fruit:
-            self.grid[f[0], f[1]] = 1
+            self.grid[1, f[0], f[1]] = 1.
             
     # updates the UI display representation of environment
     def update_display(self) -> None:
@@ -133,7 +134,7 @@ class FruitCatch:
         return reward, success
 
     # returns the grid representation of the environment by reference
-    def get_grid(self) -> np.array:
+    def get_grid(self) -> torch.tensor:
         self.update_grid()
         return self.grid
 

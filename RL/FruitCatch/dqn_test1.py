@@ -24,7 +24,10 @@ game.fruit_miss = -10.
 game.fruit_reward = 10.
 game.move_reward = -0.1
 
-max_timestamp = 10_000#_000
+iter_model_every = 10_000
+train_model_every = 1_000
+
+max_timestamp = 10_000_000
 eps_drop_freq = 1_500_000
 peek_every = 5_000_000
 peek_len = 200
@@ -60,6 +63,8 @@ while game.running == True:
     # step the game (update display given display_flag)
     reward, success = game.step(action, display_flag)
 
+    myAgent.receive_reward(reward)
+
     # calculate stats 
     if success==1:
         success_cache.append(1)
@@ -68,6 +73,16 @@ while game.running == True:
     if game.timestamp % stat_log_every == 0:
         success_rate.append(success_cache.avg())
         stat_timestamp.append(game.timestamp)
+
+    # train model parameters
+    if game.timestamp % train_model_every == 0:
+        print("Trained predictor using batch")
+        myAgent.train_predictor()
+
+    # iterate model parameters
+    if game.timestamp % iter_model_every == 0:
+        print("Iterated model (predictor model params --> target model params)")
+        myAgent.iterate_model()
 
     # print to output
     if game.timestamp % print_every == 0:

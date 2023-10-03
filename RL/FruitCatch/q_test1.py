@@ -73,6 +73,8 @@ while game.running == True:
     # step the game (update display given display_flag)
     reward, success = game.step(action, display_flag)
 
+    myAgent.receive_reward(reward)
+    
     # calculate stats 
     if success==1:
         success_cache.append(1)
